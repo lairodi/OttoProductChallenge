@@ -1,0 +1,331 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r load_libraries}
+library(caret)
+#library(doParallel)
+
+# packages for models
+library(randomForest)
+library(glmnet)
+library(party)
+library(class)
+library(nnet)
+library(e1071)
+library(klaR)
+library(pROC)
+
+# packages for data munging and visualization
+library(dplyr)
+library(ggplot2)
+```
+
+```{r model_performance}
+model_perf_noncv = data.frame(model=character(0),     # model type
+                        model_execution_time=numeric(0),
+                        train_rows=numeric(0),
+                        test_rows=numeric(0),
+                        test_accuracy=numeric(0),
+                        test_kappa=numeric(0),
+                        model_parms=character(0)
+                        )
+```
+
+
+```{r read_and_scale_data}
+train = read.csv("./Data/train.csv",header = T)
+nonzero_count = apply(train[,2:ncol(train)-1],1,function(row){sum(row>0)})
+nonzero_total = apply(train[,2:ncol(train)-1],1,sum)
+
+train = train[,c(95,2:94)]
+train$nonzero_count = nonzero_count
+train$nonzero_total = nonzero_total-1
+
+train$target = as.factor(train$target)
+
+train.standardize = data.frame(train[1],scale(train[2:96]))
+
+set.seed(123)
+ind <- sample(1:nrow(train.standardize), floor(nrow(train.standardize)*0.3))
+
+data.train = train[-ind,]
+data.test = train[ind,]
+
+data.train = train.standardize[-ind,]
+data.test = train.standardize[ind,]
+train_rows = dim(data.train)[1]
+test_rows = dim(data.test)[1]
+```
+
+```{r naive_bayes}
+beg_time = Sys.time()
+
+##NB
+model.nb = naiveBayes(target ~., data.train,laplace=1)
+
+nb.time.noncv = Sys.time() - beg_time
+confusion.nb = confusionMatrix(predict(model.nb,data.test[,-1]), data.test$target)
+mod_summary = c("Naive Bayes",
+                 nb.time,
+                 train_rows,
+                 test_rows=test_rows,
+                 confusion.nb$overall[1],
+                 confusion.nb$overall[2], 
+                 model_parms="laplace=1")
+```
+
+```{r}
+
+model_perf_noncv[nrow(model_perf_noncv) + 1,] = mod_summary
+```
+
+```{r KNN}
+
+##KNN
+beg_time = Sys.time()
+
+model.knn = knn(data.train[,-1], data.test[,-1], data.train$target, k=9, prob=TRUE)
+
+knn.time.noncv = Sys.time() - beg_time
+
+confusion.knn = confusionMatrix(model.knn, data.test$target)
+mod_summary = c("KNN",
+                 knn.time,
+                 train_rows,
+                 test_rows=test_rows,
+                 confusion.knn$overall[1],
+                 confusion.knn$overall[2], 
+                 model_parms="n=9")
+
+model_perf_noncv[nrow(model_perf_noncv) + 1,] = mod_summary
+
+```
+
+```{r}
+confusion.knn$byClass[,c(1,2)]
+```
+
+
+```{r LR_multinomial}
+##LR_multinomial
+
+beg_time = Sys.time()
+
+data.train$target <- relevel(data.train$target, ref = "Class_2")
+wts <- runif(nrow(data.train))
+model.mnlr = multinom(target~., data = data.train, weights = wts,maxit=1337)
+
+mnlr.time.noncv = Sys.time()  - beg_time
+
+confusion.mnlr = confusionMatrix(predict(model.mnlr, newdata = data.test, "class"), data.test$target)
+mod_summary = c("LR - Multinomial",
+                 mnlr.time,
+                 train_rows,
+                 test_rows=test_rows,
+                 confusion.mnlr$overall[1],
+                 confusion.mnlr$overall[2], 
+                 model_parms="Starting Class =2\nRandom weights \nMax Iterations = 1500")
+
+model_perf_noncv[nrow(model_perf_noncv) + 1,] = mod_summary
+
+```
+
+
+```{r SVM_PCA}
+##SVM+pca
+
+beg_time = Sys.time()
+
+model.pca = preProcess(x = data.train[,-1], method = "pca")
+data.train.pca = predict(model.pca, data.train)
+data.test.pca = predict(model.pca, data.test)
+model.svm =  svm(formula = target ~ ., data = data.train.pca,type = "C-classification", kernel = "linear")
+
+svmpca.time.noncv = Sys.time()  - beg_time
+confusion.svm = confusionMatrix(predict(model.svm, newdata = data.test.pca[,-1]), data.test.pca$target)
+mod_summary = c("PCA + SVM",
+                 svmpca.time,
+                 train_rows,
+                 test_rows,
+                 confusion.svm$overall[1],
+                 confusion.svm$overall[2], 
+                 model_parms="kernel = linear, #PC=78")
+
+model_perf_noncv[nrow(model_perf_noncv) + 1,] = mod_summary
+
+```
+
+
+```{r neural_network}
+
+##neural network
+
+beg_time = Sys.time()
+
+model.nn = nnet(target ~ ., data.train, size = 3, rang = 0.1, decay = 5e-4, maxit = 500)
+
+nn.time = Sys.time()  - beg_time
+
+confusion.nn.noncv = confusionMatrix(as.factor(predict(model.nn, newdata = data.test[,-1], type = "class")),data.test[,1])
+```
+
+```{r}
+mod_summary = c("Neural Network",
+                 nn.time,
+                 train_rows,
+                 test_rows,
+                 confusion.nn.noncv$overall[1],
+                 confusion.nn.noncv$overall[2], 
+                 model_parms="size = 3, rang = 0.1, decay = 5e-4, maxit = 500")
+
+model_perf_noncv[nrow(model_perf_noncv) + 1,] = mod_summary
+
+```
+
+```{r random_forest}
+## random forest
+print("Random forest - start")
+beg_time = Sys.time()
+model.rf <- randomForest(target~., data = data.train, ntree = 200, importance=TRUE)
+
+rf.time.noncv = Sys.time()  - beg_time
+
+confusion.rf = confusionMatrix(predict(model.rf, newdata = data.test, "class"), data.test$target)
+mod_summary = c("Random Forest",
+                 rf.time,
+                 train_rows,
+                 test_rows,
+                 confusion.rf$overall[1],
+                 confusion.rf$overall[2], 
+                 model_parms="ntree = 200, importance=TRUE")
+
+model_perf_noncv[nrow(model_perf_noncv) + 1,] = mod_summary
+
+```
+
+
+```{r xgboost}
+##XGBoost
+
+library(xgboost)
+
+print("XGBoost - start")
+beg_time = Sys.time()
+
+# create target vector
+train.y <- data.train$target
+train.y <- gsub('Class_','', train.y)
+train.y <- as.integer(train.y) - 1  #xgboost take features in [0, number of classes)
+
+# create matrix of original features for train.x
+train.x <- data.train[,-1]
+train.x <- as.matrix(train.x)
+train.x <- matrix(data = as.numeric(train.x), nrow = nrow(train.x), ncol = ncol(train.x))
+
+# Set necessary parameter
+xg.param <- list("objective" = "multi:softprob",
+                 'eval_metric' = "mlogloss",
+                 'num_class' = 9,
+                 'eta' = 0.005,
+                 'gamma' = 0.5,
+                 'max.depth' = 10,
+                 'min_child_weight' = 4,
+                 'subsample' = 0.9,
+                 'colsample_bytree' = 0.8,
+                 'nthread' = 3)
+
+# fit model on training set
+model.xgb = xgboost(param = xg.param, data = train.x, label = train.y, nround=250)
+
+
+xgb.time.noncv = Sys.time()  - beg_time
+
+pred = predict(model.xgb, newdata = as.matrix(data.test[,-1]))
+pred = matrix(pred,9,length(pred)/9) %>% t() %>% data.frame() %>%
+        mutate(pred_class = paste0("Class_",max.col(., "last")))
+
+
+confusion.xgb = confusionMatrix(factor(pred$pred_class), data.test$target, mode = "everything")
+mod_summary = c("XGBoost",
+                 xgb.time,
+                 train_rows,
+                 test_rows,
+                 confusion.xgb$overall[1],
+                 confusion.xgb$overall[2], 
+                 model_parms= "objective = multi:softprob, eval_metric = mlogloss,num_class = 9,eta = 0.005,
+                 gamma = 0.5,
+                 max.depth = 10,
+                 min_child_weight = 4,
+                 subsample = 0.9,
+                 colsample_bytree = 0.8,
+                 nthread = 3")
+
+model_perf_noncv[nrow(model_perf_noncv) + 1,] = mod_summary
+
+```
+
+
+
+
+
+```{r elasticnet}
+# Predictor variables
+x <- model.matrix(target~., data.train)[,-1]
+# Outcome variable
+y <- as.factor(data.train$target)
+```
+
+
+```{r}
+beg_time = Sys.time()
+model.en = glmnet(x, y, alpha = 1, lambda = NULL, family = "multinomial")
+en.time.noncv = Sys.time()  - beg_time
+```
+
+```{r}
+
+predict.en.nocv = predict(model.en, as.matrix(data.test[,-1]), s = model.en$lambda.min, type = "response")
+
+ref_labels = data.test$target
+pred_labels = levels(data.test$target)[max.col(predict.en.nocv[,,1])]
+
+caret::confusionMatrix(table(pred_labels,ref_labels))
+
+confusion.en = confusionMatrix(predict.en.nocv, data.test$target)
+mod_summary = c("Elastic Net",
+                 en.time,
+                 train_rows,
+                 test_rows,
+                 confusion.en$overall[1],
+                 confusion.en$overall[2], 
+                 model_parms="")
+
+model_perf_noncv[nrow(model_perf_noncv) + 1,] = mod_summary
+```
+
+
+```{r}
+exec.time.nocv = data.frame (model  = c("Naive Bayes", 
+                                             "KNN",
+                                             "PCA + SVM", 
+                                             "LR (Mulitnomial)",
+                                             "Random Forest",
+                                             "Neural Network",
+                                             "XGBoost",
+                                              "Elastic Net"),
+                             exec_time = c(nb.time.noncv,knn.time.noncv,svmpca.time.noncv,
+                                           mnlr.time.noncv,rf.time.noncv,
+                                           nn.time.noncv,xgb.time.noncv, en.time.noncv)
+)
+exec.time.nocv
+```
+
+
+```{r}
+model_perf_noncv
+
+write.csv(model_perf_noncv,"noncv_model_performance.csv", row.names = FALSE)
+```

@@ -1,0 +1,143 @@
+---
+title: "Feature Selection - PCA & RF"
+output:
+  pdf_document: 
+    fig_caption: yes
+  word_document: default
+  html_document:
+  df_print: paged
+
+---
+  
+$\vspace{-0.5cm}$
+
+```{r, include=FALSE}
+rm(list=ls())
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, 
+                      fig.pos = 'H',fig.height=3, fig.width=10, 
+                      fig.path='figure/graphics-',
+                      cache.path='cache/graphics-', 
+                      fig.align='center', external=TRUE)
+                 
+```
+
+```{r ref.label=knitr::all_labels(), eval=FALSE, echo=TRUE}
+
+ 
+
+```
+
+```{r}
+library(caret)
+#library(doParallel)
+
+# packages for models
+library(randomForest)
+library(glmnet)
+library(party)
+library(class)
+library(nnet)
+library("factoextra")
+
+# packages for data munging and visualization
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+train = read.csv("./Data/train.csv",header = T)
+nonzero_count = apply(train[,2:ncol(train)-1],1,function(row){sum(row>0)})
+nonzero_total = apply(train[,2:ncol(train)-1],1,sum)
+
+train = train[,c(95,2:94)]
+train$nonzero_count = nonzero_count
+train$nonzero_total = nonzero_total
+
+train$target = as.factor(train$target)
+```
+
+```{r}
+set.seed(123)
+ind <- sample(1:nrow(train), floor(nrow(train)*0.3))
+
+data.train = train[-ind,]
+data.test = train[ind,]
+#x <- model.matrix(target ~., data = train[-ind, ])[, -1]
+#y <- train[-ind, ]$target
+```
+
+
+```{r}
+model.pca <- prcomp(data.train[,-1],
+             center = TRUE,
+            scale. = TRUE)
+
+```
+
+```{r}
+# loading library
+library(ggfortify)
+model.pca.plot <- autoplot(model.pca,
+                          data = data.train,
+                          colour = 'target')
+  
+model.pca.plot
+```
+
+```{r}
+
+fviz_eig(model.pca,ncp=50, ylim = c(0, 10)) + 
+  theme(text = element_text(size=8))
+
+model.pca.vars =  get_pca_var(model.pca)
+fviz_contrib(model.pca, choice = "var", axes = 1, top =25)
+fviz_contrib(model.pca, choice = "var", axes = 2, top = 25)
+
+
+```
+
+```{r}
+fviz_pca_var(model.pca, col.var = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07")
+             )
+
+```
+
+```{r}
+model.rf = randomForest(target~.,
+                      train, importance=TRUE)
+```
+
+```{r}
+ feat_imp_df <- importance(model.rf) %>%
+    data.frame() %>% 
+    mutate(feature = row.names(.)) %>% top_n(25)
+
+# plot dataframe
+ggplot(feat_imp_df, aes(x = reorder(feature, MeanDecreaseGini), 
+                         y = MeanDecreaseGini)) +
+    geom_bar(stat='identity') +
+    coord_flip() +
+    theme_classic() +
+    labs(
+      x     = "Feature",
+      y     = "Importance",
+      title = "Feature Importance: Mean Descrease Gini"
+    )
+
+# plot dataframe
+ggplot(feat_imp_df, aes(x = reorder(feature, MeanDecreaseAccuracy), 
+                         y = MeanDecreaseAccuracy)) +
+    geom_bar(stat='identity') +
+    coord_flip() +
+    theme_classic() +
+    labs(
+      x     = "Feature",
+      y     = "Importance",
+      title = "Feature Importance: Mean Descrease Accuracy"
+    )
+```
+
+
+
+
